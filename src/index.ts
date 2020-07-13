@@ -19,8 +19,12 @@ export interface OutputMessage {
 
   /** A preformatted string */
   formattedMessage: string;
+
   /** The file-path in which the error occurred */
   filePath: string;
+  /** The relative-file-path in which the error occurred -- relative to PluginOptions.relativeBasePath */
+  relativeFilePath: string;
+
   /** The line number on which the error started */
   line: number;
   /** eslint might have an auto-fix, or one or more Suggestions */
@@ -43,7 +47,16 @@ export interface PluginOptions {
    * (depending on Pull Request Labels for example), you can hook in to this function
    */
   onLintMessage?: OnLintMessage;
+
+  /**
+   * If you're executing eslint outside the root of your repo, you may need this.
+   * - (Monorepos may want to configure this)
+   * Any files that that do not start with this path prefix will be skipped!
+   */
+  relativeBasePath?: string;
 }
+
+type InternalPluginOptions = Required<PluginOptions>;
 
 const DefaultExtensions = [".js"];
 
@@ -54,8 +67,6 @@ export default async function eslint(
   config: EslintOptions,
   extensionsOrOptions: string[] | PluginOptions = DefaultExtensions
 ): Promise<void[]> {
-  const allFiles = danger.git.created_files.concat(danger.git.modified_files);
-
   let parsedConfig: CLIEngine.Options["baseConfig"];
   if (typeof config === "string") {
     parsedConfig = JSON.parse(config);
@@ -64,13 +75,22 @@ export default async function eslint(
   }
   const eslintOptions: CLIEngine.Options = { baseConfig: parsedConfig };
 
-  let pluginOptions: PluginOptions = {};
+  let pluginOptions: InternalPluginOptions = {
+    extensions: DefaultExtensions,
+    relativeBasePath: "",
+    onLintMessage: defaultOnLintMessage,
+  };
+
   if (extensionsOrOptions != null) {
     if (Array.isArray(extensionsOrOptions)) {
-      eslintOptions.extensions = extensionsOrOptions ?? DefaultExtensions;
+      eslintOptions.extensions = pluginOptions.extensions = extensionsOrOptions ?? DefaultExtensions;
     } else {
-      pluginOptions = extensionsOrOptions;
-      eslintOptions.extensions = extensionsOrOptions.extensions ?? DefaultExtensions;
+      pluginOptions = {
+        ...pluginOptions,
+        ...extensionsOrOptions,
+        extensions: extensionsOrOptions.extensions ?? DefaultExtensions,
+      };
+      eslintOptions.extensions = pluginOptions.extensions;
     }
     if (eslintOptions.baseConfig) {
       // We want to ignore eslintrc files on disk if a config was passed in!
@@ -79,11 +99,44 @@ export default async function eslint(
     }
   }
   const cli = new CLIEngine(eslintOptions);
+
+  const allFiles = danger.git.created_files.concat(danger.git.modified_files).map((filePath) => ({
+    filePath,
+    relativeFilePath: makeRelativePathOrNull(pluginOptions.relativeBasePath, filePath),
+  }));
+
   // let eslint filter down to non-ignored, matching the extensions expected
-  const filesToLint = allFiles.filter((f) => {
-    return !cli.isPathIgnored(f) && eslintOptions.extensions.some((ext) => f.endsWith(ext));
+  const filesToLint = allFiles.filter(({ relativeFilePath }) => {
+    return (
+      !!relativeFilePath && // File is under control of the pluginOptions.relativeBasePath
+      !cli.isPathIgnored(relativeFilePath) &&
+      eslintOptions.extensions.some((ext) => relativeFilePath.endsWith(ext))
+    );
   });
   return Promise.all(filesToLint.map((f) => lintFile(cli, eslintOptions, pluginOptions, f)));
+}
+
+function makeRelativePathOrNull(basePath: string, filePath: string) {
+  if (basePath === "") {
+    // User wants traditional behavior
+    return filePath;
+  }
+  const chunks = filePath.split(basePath);
+  if (chunks.length < 2) {
+    // basePath is not in the filePath -- so this file is outside our directory!
+    return null;
+  }
+
+  // Drop the first basePath
+  chunks.shift();
+
+  // Rejoin the remaining chunks (in case basePath is in there multiple times)
+  const candidate = chunks.join(basePath);
+  if (candidate.startsWith("/")) {
+    // Make sure the path doesn't start with a trailing slash
+    return candidate.slice(1);
+  }
+  return candidate;
 }
 
 function lookupSuggestedReporter(severity: Linter.LintMessage["severity"]): OutputMessage["suggestedReporter"] {
@@ -102,11 +155,11 @@ async function defaultOnLintMessage({
 async function lintFile(
   linter: CLIEngine,
   engineOptions: CLIEngine.Options,
-  pluginOptions: PluginOptions,
-  filePath: string
+  pluginOptions: InternalPluginOptions,
+  { filePath, relativeFilePath }: { filePath: string; relativeFilePath: string }
 ) {
   const contents = await danger.github.utils.fileContents(filePath);
-  const report = linter.executeOnText(contents, filePath);
+  const report = linter.executeOnText(contents, relativeFilePath);
 
   if (report && report.results && report.results.length !== 0) {
     await Promise.all(
@@ -119,9 +172,10 @@ async function lintFile(
 
         const hasFixesOrSuggestions = !!msg.fix || (Array.isArray(msg.suggestions) && msg.suggestions.length > 0);
 
-        return await (pluginOptions.onLintMessage || defaultOnLintMessage)({
-          formattedMessage: `${filePath} line ${msg.line} – ${msg.message} (${msg.ruleId})`,
+        return await pluginOptions.onLintMessage({
+          formattedMessage: `${relativeFilePath} line ${msg.line} – ${msg.message} (${msg.ruleId})`,
           filePath,
+          relativeFilePath,
           line: msg.line,
           hasFixesOrSuggestions,
           linterMessage: msg,
