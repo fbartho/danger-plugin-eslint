@@ -13,7 +13,7 @@ function ignore(message: string, file?: string, line?: number): void {
 
 import { CLIEngine, Linter } from "eslint";
 
-interface OutputMessage {
+export interface OutputMessage {
   /** Which danger-reporter would originally have been used for a message of this severity */
   suggestedReporter: typeof message | typeof warn | typeof fail | typeof markdown | typeof ignore;
 
@@ -30,11 +30,11 @@ interface OutputMessage {
   linterMessage: Linter.LintMessage;
 }
 
-type OnLintMessage = (msg: OutputMessage) => Promise<void>;
+export type OnLintMessage = (msg: OutputMessage) => Promise<void>;
 
-type EslintOptions = string | CLIEngine.Options["baseConfig"];
+export type EslintOptions = string | CLIEngine.Options["baseConfig"];
 
-interface PluginOptions {
+export interface PluginOptions {
   /** Override the base extensions from the Eslint Config */
   extensions?: string[];
 
