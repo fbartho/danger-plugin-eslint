@@ -18,10 +18,12 @@
   "version": "1.1.0-beta.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "scripts": {
+  "scripts-disabled": {
     "precommit": "lint-staged",
     "commit": "git-cz",
-    "commitmsg": "validate-commit-msg",
+    "commitmsg": "validate-commit-msg"
+  },
+  "scripts": {
     "build": "tsc",
     "test": "jest",
     "predocs": "rm -rf docs/",
