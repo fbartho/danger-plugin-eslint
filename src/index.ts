@@ -50,7 +50,7 @@ export interface PluginOptions {
 
   /**
    * If you're executing eslint outside the root of your repo, you may need this.
-   *  (Monorepos may want to configure this)
+   * - (Monorepos may want to configure this)
    * Any files that that do not start with this path prefix will be skipped!
    */
   relativeBasePath?: string;
